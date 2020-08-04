@@ -1,0 +1,62 @@
+service: manual-approval
+
+provider:
+  name: aws
+  runtime: python3.7
+  memorySize: 128
+  timeout: 30
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'ap-northeast-1'}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - states:SendTaskSuccess
+        - states:SendTaskFailure
+      Resource:
+        - "*"
+  environment:
+    SLACK: ''
+plugins:
+  - serverless-python-requirements
+  - serverless-step-functions
+functions:
+  worker:
+    handler: slack.worker
+  receiver:
+    handler: slack.receiver
+    events:
+      - http:
+          path: /task
+          method: post
+custom:
+  pythonRequirements:
+    usePipenv: true
+stepFunctions:
+  stateMachines:
+    ManualApproval:
+      name: ManualApproval
+      definition:
+        StartAt: ApprovalRequest
+        States:
+          ApprovalRequest:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke.waitForTaskToken
+            Parameters:
+              FunctionName: ${self:service}-${opt:stage}-worker
+              Payload:
+                Message.$: $.message
+                TaskToken.$: $$.Task.Token
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              Next: Reject
+            Next: Approve
+          Approve:
+            Type: Pass
+            End: true
+          Reject:
+            Type: Pass
+            End: true
+package:
+  exclude:
+    - .git/**
